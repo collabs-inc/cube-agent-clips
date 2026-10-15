@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "onboarding": {
+    "firstRun": {
+      "development": "off",
+      "production": "off"
+    }
+  },
+  "doctor": {
+    "dbToolScopingDenylist": {
+      "recording_agent_views": "Agent telemetry is scoped through authorized parent recordings."
+    },
+    "failOnBuild": false
+  },
+  "deployment": {
+    "environment": "local"
+  },
+  "runtime": {
+    "auth": {
+      "enabled": false
+    }
+  }
+}
