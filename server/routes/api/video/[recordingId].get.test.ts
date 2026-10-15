@@ -18,6 +18,12 @@ const mockSignShortLivedToken = vi.hoisted(() => vi.fn());
 const mockVerifyShortLivedToken = vi.hoisted(() => vi.fn());
 const mockGetDb = vi.hoisted(() => vi.fn());
 const mockFetchS3ObjectByUrl = vi.hoisted(() => vi.fn());
+const mockReadCubeFile = vi.hoisted(() => vi.fn());
+
+vi.mock("../../../lib/cube-storage.js", () => ({
+  CUBE_FILES_PREFIX: "/api/cube-files/",
+  getCubeStorage: () => ({ readPublic: mockReadCubeFile }),
+}));
 
 vi.mock("h3", () => ({
   defineEventHandler: (handler: unknown) => handler,
@@ -186,6 +192,43 @@ describe("/api/video/:recordingId route", () => {
       error: "Recording media could not be fetched.",
     });
   });
+
+  it.each([undefined, "bytes=1-3", "bytes=-2", "bytes=99-"])(
+    "serves durable Cube files through canonical media route (%s)",
+    async (range) => {
+      const id = "fc83c4d6-165b-4086-9977-e7784d70f46e";
+      mockResolveAccess.mockResolvedValue({
+        role: "owner",
+        resource: {
+          visibility: "private",
+          password: null,
+          expiresAt: null,
+          videoUrl: `/api/cube-files/${id}`,
+        },
+      });
+      mockReadCubeFile.mockResolvedValue({
+        data: Buffer.from("abcdef"),
+        mimeType: "video/webm",
+      });
+      const event = makeEvent();
+      if (range) event.headers.set("range", range);
+      const result = await handler(event as any);
+      expect(mockReadCubeFile).toHaveBeenCalledWith(id);
+      expect(event.status).toBe(
+        range === "bytes=99-" ? 416 : range ? 206 : 200,
+      );
+      expect(result.toString()).toBe(
+        range === "bytes=99-"
+          ? ""
+          : range === "bytes=1-3"
+            ? "bcd"
+            : range === "bytes=-2"
+              ? "ef"
+              : "abcdef",
+      );
+      expect(fetch).not.toHaveBeenCalled();
+    },
+  );
 
   it("maps provider fetch aborts to timeout errors", async () => {
     vi.mocked(fetch).mockImplementation((_url, init) => {

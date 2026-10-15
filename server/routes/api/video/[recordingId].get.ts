@@ -64,6 +64,10 @@ import {
   loomEmbedUrlForRecording,
 } from "../../../../shared/loom.js";
 import { getDb, schema } from "../../../db/index.js";
+import {
+  CUBE_FILES_PREFIX,
+  getCubeStorage,
+} from "../../../lib/cube-storage.js";
 import { allowsLegacyS3ObjectForPersistedMedia } from "../../../lib/media-storage-provenance.js";
 import {
   isHeldForRedaction,
@@ -452,7 +456,27 @@ export default defineEventHandler(async (event: H3Event) => {
       const b64 = typeof blob?.data === "string" ? blob.data : null;
       const rangeHeader = getRequestHeader(event, "range");
 
-      if (!b64) {
+      // Finalized Cube recordings live on disk, without the legacy SQL blob.
+      // Read only our validated opaque file IDs after the recording's access,
+      // expiry, redaction and password gates above; reuse the range code below.
+      let cubeMedia: { data: Buffer; mimeType: string } | undefined;
+      if (!b64 && rec.videoUrl?.startsWith(CUBE_FILES_PREFIX)) {
+        try {
+          cubeMedia = await getCubeStorage().readPublic(
+            rec.videoUrl.slice(CUBE_FILES_PREFIX.length),
+          );
+        } catch (error) {
+          if (
+            (error as NodeJS.ErrnoException).code !== "ENOENT" &&
+            (error as Error).message !== "Invalid Cube file id"
+          )
+            throw error;
+          setResponseStatus(event, 404);
+          return { error: "Blob not found" };
+        }
+      }
+
+      if (!b64 && !cubeMedia) {
         const sourceUrl = rec.videoUrl ?? "";
         if (!sourceUrl) {
           setResponseStatus(event, 404);
@@ -560,8 +584,9 @@ export default defineEventHandler(async (event: H3Event) => {
         }
       }
       const mimeType =
-        typeof blob?.mimeType === "string" ? blob.mimeType : "video/webm";
-      const bytes = Buffer.from(b64, "base64");
+        cubeMedia?.mimeType ??
+        (typeof blob?.mimeType === "string" ? blob.mimeType : "video/webm");
+      const bytes = cubeMedia?.data ?? Buffer.from(b64 ?? "", "base64");
       const total = bytes.byteLength;
 
       setResponseHeader(event, "Content-Type", mimeType);
